@@ -1,6 +1,7 @@
 import sys
 import math
 import numpy as np
+from numpy import random as random
 import scipy.io.wavfile as wavfile
 from scipy import signal
 
@@ -30,8 +31,7 @@ base_freqs = {
 # each voice moves slowly and randomly
 # 30 voices at random pitches between 200-400 Hz
 
-random_time = 4
-random_start_amp = 0.1
+random_time = 3
 random_min_hz = 200
 random_max_hz = 400
 
@@ -39,7 +39,6 @@ random_max_hz = 400
 # all voices proceed directly to target note
 
 converge_time = 5
-converge_start_amp = 0.5
 
 # phase 3
 # 3 voices per note in treble
@@ -47,8 +46,6 @@ converge_start_amp = 0.5
 # each voice is slightly and randomly detuned
 
 hold_time = 5
-hold_start_amp = 0.9
-hold_end_amp = 1.0
 n_bass_voices = 2
 n_treble_voices = 3
 hold_freq_deviation = 0.05
@@ -88,71 +85,57 @@ def build_wav():
     # random phase
 
     n_samples = sample_rate * random_time
+    n_samples_inv = 1 / float(n_samples)
     begin = 0
     end = n_samples
     random_notes = np.zeros(n_all_voices)
     samples = np.arange(n_samples) / float(sample_rate)
+
     for n_voices, notes in all_voices:
         for v in range(n_voices):
             for i, (key, octave) in enumerate(notes):
-                freq = np.random.randint(random_min_hz, random_max_hz)
-                # increase amplitude linearly
-                amp = np.linspace(
-                    random_start_amp, converge_start_amp, num=n_samples, endpoint=True
-                )
-                arr[begin:end] += amp * np.sin(two_pi * freq * samples)
-                # save final freq for phase 2
-                random_notes[v] = freq
+                freq = random.randint(random_min_hz, random_max_hz)
+                diff_above = random_max_hz - freq
+                diff_below = freq - random_min_hz
+                if diff_above > diff_below:
+                    target_freq = freq + random.randint(0, diff_above)
+                else:
+                    target_freq = freq + random.randint(0, diff_below)
 
-    # n_samples = sample_rate * random_time
-    # begin = 0
-    # end = n_samples
-    # random_notes = np.zeros(n_all_voices)
-    # samples = np.arange(n_samples) / float(sample_rate)
-    # for v in range(n_all_voices):
-    #     freq = np.random.randint(random_min_hz, random_max_hz)
-    #     # increase amplitude linearly
-    #     amp = np.linspace(
-    #         random_start_amp, converge_start_amp, num=n_samples, endpoint=True
-    #     )
-    #     arr[begin:end] += amp * np.sin(two_pi * freq * samples)
-    #     # save final freq for phase 2
-    #     random_notes[v] = freq
+                # save final freq for phase 2
+                random_notes[i * n_voices + v] = target_freq
+
+                # increase amplitude linearly
+                amp = np.linspace(0.1, 0.4, num=n_samples, endpoint=True)
+
+                # frequency wanders
+                tmp = np.zeros(n_samples)
+                for j in range(n_samples):
+                    tmp[j] += two_pi * freq * samples[j]
+                    freq += (target_freq - freq) * n_samples_inv
+                arr[begin:end] += np.sin(tmp) * amp
 
     # converge phase
 
     n_samples = sample_rate * converge_time
+    n_samples_inv = 1 / float(n_samples)
     begin = end
     end = begin + n_samples
-    target_notes = np.zeros(n_all_voices)
     samples = np.arange(n_samples) / float(sample_rate)
-    for v in range(n_all_voices):
-        current_freq = random_notes[v]
-        # of every five voices, three should be in treble, two in bass
-        target_staff = (
-            target_chord_bass
-            if v % (n_bass_voices + n_treble_voices) < n_bass_voices
-            else target_chord_treble
-        )
-        target_freq = key_to_freq(*target_staff[v % len(target_staff)])
-        target_notes[v] = target_freq
 
-    random_notes = np.sort(random_notes)
-    target_notes = np.sort(target_notes)
-    print(list(zip(random_notes, target_notes)))
-    for v in range(n_all_voices):
-        # increase amplitude linearly
-        amp = np.linspace(
-            converge_start_amp, hold_start_amp, num=n_samples, endpoint=True
-        )
-        # move linearly towards target note
-        arr[begin:end] += amp * np.sin(
-            two_pi
-            * np.linspace(
-                random_notes[v], target_notes[v], num=n_samples, endpoint=True
-            )
-            * samples
-        )
+    for n_voices, notes in all_voices:
+        for v in range(n_voices):
+            for i, (key, octave) in enumerate(notes):
+                current_freq = random_notes[i * n_voices + v]
+                target_freq = key_to_freq(key, octave)
+                # increase amplitude linearly
+                amp = np.linspace(0.4, 0.8, num=n_samples, endpoint=True)
+                # move towards target note
+                tmp = np.zeros(n_samples)
+                for j in range(n_samples):
+                    tmp[j] += two_pi * current_freq * samples[j]
+                    current_freq += (target_freq - current_freq) * n_samples_inv
+                arr[begin:end] += np.sin(tmp) * amp
 
     # hold phase
 
@@ -160,16 +143,14 @@ def build_wav():
     begin = end
     end = begin + n_samples
     samples = np.arange(n_samples) / float(sample_rate)
-    for n_voices, notes in (
-        (n_bass_voices, target_chord_bass),
-        (n_treble_voices, target_chord_treble),
-    ):
+
+    for n_voices, notes in all_voices:
         for v in range(n_voices):
-            detune = np.random.uniform(-hold_freq_deviation, hold_freq_deviation)
+            detune = random.uniform(-hold_freq_deviation, hold_freq_deviation)
             for i, (key, octave) in enumerate(notes):
                 freq = key_to_freq(key, octave) + detune
                 # increase amplitude linearly
-                amp = np.linspace(hold_start_amp, hold_end_amp, n_samples)
+                amp = np.linspace(0.6, 1.0, num=n_samples, endpoint=True)
                 arr[begin:end] += amp * np.sin(two_pi * freq * samples)
 
     # scale output between -1, 1
