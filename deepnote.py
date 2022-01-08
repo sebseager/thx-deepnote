@@ -1,4 +1,3 @@
-import sys
 import math
 import numpy as np
 from numpy import random as random
@@ -8,6 +7,9 @@ from scipy import signal
 # https://www.thx.com/deepnote
 # https://en.wikipedia.org/wiki/Deep_Note
 # https://pages.mtu.edu/~suits/notefreqs.html
+
+# also take a look at https://github.com/DylanJones/thx
+# for a different Python implementation
 
 sample_rate = 44100
 two_pi = 2 * np.pi
@@ -45,10 +47,10 @@ converge_time = 5
 # 2 voices per note in bass
 # each voice is slightly and randomly detuned
 
-hold_time = 5
+chord_time = 5
 n_bass_voices = 2
 n_treble_voices = 3
-hold_freq_deviation = 0.05
+chord_detune = 0.6
 target_chord_bass = [
     ("D", 1),
     ("D", 2),
@@ -80,9 +82,9 @@ def key_to_freq(key, octave):
 
 
 def build_wav():
-    arr = np.zeros(sample_rate * (random_time + converge_time + hold_time))
+    arr = np.zeros(sample_rate * (random_time + converge_time + chord_time))
 
-    # random phase
+    # random
 
     n_samples = sample_rate * random_time
     n_samples_inv = 1 / float(n_samples)
@@ -95,12 +97,12 @@ def build_wav():
         for v in range(n_voices):
             for i, (key, octave) in enumerate(notes):
                 freq = random.randint(random_min_hz, random_max_hz)
-                diff_above = random_max_hz - freq
-                diff_below = freq - random_min_hz
-                if diff_above > diff_below:
-                    target_freq = freq + random.randint(0, diff_above)
+                diff_above = abs(random_max_hz - freq)
+                diff_below = abs(freq - random_min_hz)
+                if diff_below > diff_above:
+                    target_freq = freq - random.randint(0, diff_below)
                 else:
-                    target_freq = freq + random.randint(0, diff_below)
+                    target_freq = freq + random.randint(0, diff_above)
 
                 # save final freq for phase 2
                 random_notes[i * n_voices + v] = target_freq
@@ -115,7 +117,7 @@ def build_wav():
                     freq += (target_freq - freq) * n_samples_inv
                 arr[begin:end] += np.sin(tmp) * amp
 
-    # converge phase
+    # converge
 
     n_samples = sample_rate * converge_time
     n_samples_inv = 1 / float(n_samples)
@@ -137,18 +139,18 @@ def build_wav():
                     current_freq += (target_freq - current_freq) * n_samples_inv
                 arr[begin:end] += np.sin(tmp) * amp
 
-    # hold phase
+    # chord
 
-    n_samples = sample_rate * hold_time
+    n_samples = sample_rate * chord_time
     begin = end
     end = begin + n_samples
     samples = np.arange(n_samples) / float(sample_rate)
 
     for n_voices, notes in all_voices:
         for v in range(n_voices):
-            detune = random.uniform(-hold_freq_deviation, hold_freq_deviation)
             for i, (key, octave) in enumerate(notes):
-                freq = key_to_freq(key, octave) + detune
+                freq = key_to_freq(key, octave)
+                freq = freq + chord_detune * (random.rand() - 0.5)
                 # increase amplitude linearly
                 amp = np.linspace(0.6, 1.0, num=n_samples, endpoint=True)
                 arr[begin:end] += amp * np.sin(two_pi * freq * samples)
